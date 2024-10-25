@@ -1,2 +1,4 @@
 Flask==2.2.2
 mysql-connector-python==8.0.33
+fastapi==0.100.0
+hypercorn==0.14.4
