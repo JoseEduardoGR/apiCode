@@ -62,5 +62,10 @@ def get_users():
     except mysql.connector.Error as err:
         return jsonify({"error": str(err)}), 500
 
+# Ruta para verificar la salud de la aplicación
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({"status": "OK"}), 200
+
 if __name__ == '__main__':
     app.run(debug=True)
