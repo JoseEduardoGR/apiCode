@@ -2,14 +2,14 @@ from flask import Flask, request, send_file, jsonify
 import subprocess
 import os
 import threading
-import time
+import zipfile
 import glob
 
 app = Flask(__name__)
 
 # Carpeta de descargas
 DOWNLOAD_FOLDER = "downloads"
-os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+ZIP_PATH = os.path.join(DOWNLOAD_FOLDER, "songs.zip")  # Ruta del archivo ZIP
 
 # Bloqueo para permitir solo una conexión a la vez
 lock = threading.Lock()
@@ -33,24 +33,19 @@ def download_song():
         command = ["spotdl", spotify_url, "--output", DOWNLOAD_FOLDER]
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-        # Esperar a que el archivo comience a descargarse
-        latest_file = None
-        timeout = 30  # Tiempo máximo de espera en segundos
+        # Esperar a que el proceso termine
+        process.wait()
 
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            files = glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.mp4"))
-            if files:
-                latest_file = max(files, key=os.path.getctime)
-                if os.path.exists(latest_file) and os.path.getsize(latest_file) > 1024:  # Al menos 1 KB
-                    break
-            time.sleep(1)
+        # Buscar todos los archivos MP4 descargados
+        files = glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.mp4"))
+        if not files:
+            return jsonify({"error": "No se encontraron archivos descargados"}), 500
 
-        if not latest_file or not os.path.exists(latest_file):
-            return jsonify({"error": "No se encontró el archivo descargado"}), 500
+        # Comprimir todos los archivos en un solo ZIP
+        zip_files(files)
 
-        # Enviar el archivo al usuario
-        return send_file(latest_file, as_attachment=True, mimetype='audio/mp4')
+        # Enviar el archivo ZIP
+        return send_file(ZIP_PATH, as_attachment=True, mimetype="application/zip")
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -67,6 +62,11 @@ def clean_downloads():
         except Exception as e:
             print(f"Error al eliminar {file_path}: {e}")
 
+def zip_files(files):
+    """Crea un archivo ZIP con todos los archivos MP4 descargados."""
+    with zipfile.ZipFile(ZIP_PATH, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for file in files:
+            zipf.write(file, os.path.basename(file))  # Agregar al ZIP sin la ruta completa
+
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(debug=True, port=5000)
