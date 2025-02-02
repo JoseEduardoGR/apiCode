@@ -31,21 +31,23 @@ def download_song():
 
         # Comando para ejecutar spotdl
         command = ["spotdl", spotify_url, "--output", DOWNLOAD_FOLDER]
-        process = subprocess.run(command, capture_output=True, text=True)
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-        if process.returncode != 0:
-            return jsonify({"error": process.stderr}), 500
+        # Esperar a que el archivo comience a descargarse
+        latest_file = None
+        timeout = 30  # Tiempo máximo de espera en segundos
 
-        # Buscar el archivo descargado más reciente
-        files = glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.mp4"))
-        if not files:
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            files = glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.mp4"))
+            if files:
+                latest_file = max(files, key=os.path.getctime)
+                if os.path.exists(latest_file) and os.path.getsize(latest_file) > 1024:  # Al menos 1 KB
+                    break
+            time.sleep(1)
+
+        if not latest_file or not os.path.exists(latest_file):
             return jsonify({"error": "No se encontró el archivo descargado"}), 500
-
-        latest_file = max(files, key=os.path.getctime)
-
-        # Verificar que el archivo existe y tiene un tamaño mayor que cero
-        if not os.path.exists(latest_file) or os.path.getsize(latest_file) == 0:
-            return jsonify({"error": "El archivo descargado está vacío o no existe"}), 500
 
         # Enviar el archivo al usuario
         return send_file(latest_file, as_attachment=True, mimetype='audio/mp4')
