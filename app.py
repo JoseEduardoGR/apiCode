@@ -3,6 +3,7 @@ import subprocess
 import os
 import threading
 import time
+import glob
 
 app = Flask(__name__)
 
@@ -15,8 +16,8 @@ lock = threading.Lock()
 
 @app.route('/download', methods=['POST'])
 def download_song():
-    if not lock.acquire(blocking=False):  # Intentar adquirir el bloqueo sin esperar
-        return jsonify({"error": "Servidor ocupado, intenta más tarde"}), 429  # 429 Too Many Requests
+    if not lock.acquire(blocking=False):
+        return jsonify({"error": "Servidor ocupado, intenta más tarde"}), 429
 
     try:
         data = request.json
@@ -24,6 +25,9 @@ def download_song():
 
         if not spotify_url:
             return jsonify({"error": "No se proporcionó una URL"}), 400
+
+        # Limpiar la carpeta de descargas antes de cada nueva descarga
+        clean_downloads()
 
         # Comando para ejecutar spotdl
         command = ["spotdl", spotify_url, "--output", DOWNLOAD_FOLDER]
@@ -33,29 +37,27 @@ def download_song():
             return jsonify({"error": process.stderr}), 500
 
         # Buscar el archivo descargado más reciente
-        files = os.listdir(DOWNLOAD_FOLDER)
+        files = glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.mp4"))
         if not files:
             return jsonify({"error": "No se encontró el archivo descargado"}), 500
 
-        latest_file = max([os.path.join(DOWNLOAD_FOLDER, f) for f in files], key=os.path.getctime)
+        latest_file = max(files, key=os.path.getctime)
+
+        # Verificar que el archivo existe y tiene un tamaño mayor que cero
+        if not os.path.exists(latest_file) or os.path.getsize(latest_file) == 0:
+            return jsonify({"error": "El archivo descargado está vacío o no existe"}), 500
 
         # Enviar el archivo al usuario
-        response = send_file(latest_file, as_attachment=True)
-
-        # Programar la limpieza de la carpeta después de un breve retraso
-        threading.Thread(target=clean_downloads, daemon=True).start()
-
-        return response
+        return send_file(latest_file, as_attachment=True, mimetype='audio/mp4')
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
     finally:
-        lock.release()  # Liberar el bloqueo
+        lock.release()
 
 def clean_downloads():
-    """Elimina todos los archivos de la carpeta de descargas después de un tiempo."""
-    time.sleep(5)  # Esperar 5 segundos antes de limpiar
+    """Elimina todos los archivos de la carpeta de descargas."""
     for file in os.listdir(DOWNLOAD_FOLDER):
         file_path = os.path.join(DOWNLOAD_FOLDER, file)
         try:
