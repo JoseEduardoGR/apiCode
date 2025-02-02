@@ -1,18 +1,24 @@
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, send_file, jsonify, url_for
 import subprocess
 import os
 import threading
 import zipfile
 import glob
+import uuid
+import time
 
 app = Flask(__name__)
 
 # Carpeta de descargas
 DOWNLOAD_FOLDER = "downloads"
-ZIP_PATH = os.path.join(DOWNLOAD_FOLDER, "songs.zip")  # Ruta del archivo ZIP
+if not os.path.exists(DOWNLOAD_FOLDER):
+    os.makedirs(DOWNLOAD_FOLDER)
 
 # Bloqueo para permitir solo una conexión a la vez
 lock = threading.Lock()
+
+# Diccionario para rastrear descargas y limpiar archivos
+downloads = {}
 
 @app.route('/download', methods=['POST'])
 def download_song():
@@ -26,7 +32,11 @@ def download_song():
         if not spotify_url:
             return jsonify({"error": "No se proporcionó una URL"}), 400
 
-        # Limpiar la carpeta de descargas antes de cada nueva descarga
+        # Generar un identificador único para esta descarga
+        download_id = str(uuid.uuid4())
+        zip_path = os.path.join(DOWNLOAD_FOLDER, f"{download_id}.zip")
+
+        # Limpiar descargas antiguas
         clean_downloads()
 
         # Comando para ejecutar spotdl
@@ -42,10 +52,14 @@ def download_song():
             return jsonify({"error": "No se encontraron archivos descargados"}), 500
 
         # Comprimir todos los archivos en un solo ZIP
-        zip_files(files)
+        zip_files(files, zip_path)
 
-        # Enviar el archivo ZIP
-        return send_file(ZIP_PATH, as_attachment=True, mimetype="application/zip")
+        # Guardar la descarga en el diccionario con un tiempo de expiración
+        downloads[download_id] = time.time()
+
+        # Generar el enlace de descarga
+        download_url = url_for('get_download', download_id=download_id, _external=True)
+        return jsonify({"download_url": download_url})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -53,20 +67,33 @@ def download_song():
     finally:
         lock.release()
 
-def clean_downloads():
-    """Elimina todos los archivos de la carpeta de descargas."""
-    for file in os.listdir(DOWNLOAD_FOLDER):
-        file_path = os.path.join(DOWNLOAD_FOLDER, file)
-        try:
-            os.remove(file_path)
-        except Exception as e:
-            print(f"Error al eliminar {file_path}: {e}")
+@app.route('/get_download/<download_id>', methods=['GET'])
+def get_download(download_id):
+    """Devuelve el archivo ZIP si aún está disponible."""
+    zip_path = os.path.join(DOWNLOAD_FOLDER, f"{download_id}.zip")
+    
+    if os.path.exists(zip_path):
+        return send_file(zip_path, as_attachment=True, mimetype="application/zip")
+    else:
+        return jsonify({"error": "El archivo ya no está disponible"}), 404
 
-def zip_files(files):
-    """Crea un archivo ZIP con todos los archivos MP4 descargados."""
-    with zipfile.ZipFile(ZIP_PATH, 'w', zipfile.ZIP_DEFLATED) as zipf:
+def clean_downloads():
+    """Elimina archivos ZIP que hayan superado un tiempo de vida."""
+    expiration_time = 600  # 10 minutos
+    current_time = time.time()
+    
+    for download_id, timestamp in list(downloads.items()):
+        zip_path = os.path.join(DOWNLOAD_FOLDER, f"{download_id}.zip")
+        if current_time - timestamp > expiration_time:
+            if os.path.exists(zip_path):
+                os.remove(zip_path)
+            del downloads[download_id]
+
+def zip_files(files, zip_path):
+    """Crea un archivo ZIP con los archivos descargados."""
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for file in files:
-            zipf.write(file, os.path.basename(file))  # Agregar al ZIP sin la ruta completa
+            zipf.write(file, os.path.basename(file))
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
