@@ -1,3 +1,4 @@
-flask
+fastapi
+uvicorn
 spotdl
-gunicorn
+ffmpeg
